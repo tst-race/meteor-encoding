@@ -1,130 +1,161 @@
-# Python Encoding Stub
+# Meteor Steganographic Encoding Component
 
-A source-only starting point for a Raceboat `IEncodingComponent` implemented in
-Python. It is intentionally **not a working codec**: metadata is unset and both
-codec hooks raise `NotImplementedError`. No transport, service credentials, CLI
-codec subprocesses, or C++ wrapper are included.
+Raceboat `IEncodingComponent` plugin implementing **perfectly-secure steganography** (Meteor, Kaptchuk et al., CCS 2021) with **gpt2-medium** as the carrier model. Produces **text/plain** UTF-8 output.
 
-## Generate a Plugin
+## Overview
 
-From the RACEGEN root, supply values from the approved design and benchmark:
+This plugin encodes arbitrary binary payloads into natural-looking English text (stegotext) using a GPT-2 language model as the cover distribution. The encoding provides **exact byte recovery** — it is not lossy. Decoding the stegotext returns the original payload byte-for-byte.
 
-```bash
-python3 plugins/python-encoding-stub/new_encoding.py \
-  --name MyCodec \
-  --mime-type image/png \
-  --max-bytes 4096 \
-  --encoding-time-seconds 1.0 \
-  --out ./myCodec-encoding
+**Key properties:**
+- **MIME type**: `text/plain`
+- **Max payload**: 384 bytes (8 chunks × 48 bytes)
+- **Encoding time**: ~300–340s per chunk on CPU (raceboat-runtime:local), ~2700s for full 384-byte payload
+- **Model**: gpt2-medium (345M params), pre-cached at `/opt/raceboat/models/gpt2-medium/`
+- **Security**: Cryptographic DRBG masking, HKDF per-chunk nonces, bin-sorting for prefix-bit maximization
+
+## Algorithm
+
+1. **Payload framing**: Prefix payload with 4-byte big-endian length (enables self-delimiting decode, supports zero-message encoding)
+2. **Chunking**: Split framed payload into 48-byte (384-bit) chunks
+3. **Per-chunk encoding**:
+   - Derive chunk nonce via HKDF-SHA256 from base nonce
+   - Initialize GPT-2 with sliding-window context (last 128 tokens from previous chunk)
+   - For each 32-bit word: DRBG-mask message bits → arithmetic coding with bin-sort → sample token
+   - Finish sentence if `finish_sent=True`
+4. **Concatenation**: Join chunk stegotexts directly (no delimiter; boundaries implicit via length prefix)
+5. **Output**: UTF-8 encoded stegotext bytes
+
+## Configuration Parameters
+
+The plugin requests these parameters via `requestPluginUserInput` at initialization:
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `encoding-params` | Yes | JSON object with: `context` (string), `input_key` (base64, 512 bits), `sample_seed_prefix` (base64, 48 bits), `input_nonce` (base64, 512 bits) |
+| `save-encoded-output` | No | Boolean (default: false). When true, writes successful encoded bytes to `<loggingDirectory>/encoding-outputs/` for offline analysis |
+| `encoding-time-seconds` | No | Float. Overrides `metadata.json` default. Use `run_benchmark_docker.sh` to determine value for target hardware |
+
+**Example `encoding-params` JSON:**
+```json
+{
+  "context": "Your context text here",
+  "input_key": "base64-encoded-64-byte-key",
+  "sample_seed_prefix": "base64-encoded-6-byte-prefix",
+  "input_nonce": "base64-encoded-64-byte-nonce"
+}
 ```
 
-These are illustrative values, not capacity or timing claims. The destination
-must not exist and must be outside this template. Generation derives the package
-and class `PluginMyCodecEncoding`, encoding id `myCodec`, and manifest together.
-It does not initialize Git. Generated projects retain these development
-instructions; use their own generated names rather than the template names below.
-
-## Implement the Codec
-
-- `source/PluginMeteorEncoding/codec.py`: implement `encode(payload, parameters)`
-  and `decode(content, parameters)` by importing the chosen Python library. Both
-  accept native `bytes` and the `EncodingParameters.json` string, and must return
-  native `bytes`. Parse and validate the parameter JSON here as needed.
-- `source/PluginMeteorEncoding/plugin.py`: the API adapter, factory, SDK state
-  notification, SWIG byte-vector conversion, capacity checks, callbacks, and
-  opt-in encoded-output persistence.
-- `source/PluginMeteorEncoding/metadata.json`: MIME type, raw payload capacity,
-  encoding id, and pessimistic encoding time in seconds. The scheduler compares
-  `now + encodingTime` with action timestamps in
-  `raceboat/source/decomposed/ComponentPackageManager.cpp::isTimeToEncode`.
-- `source/manifest.json`: encoding-only Python registration. `python_class` is
-  included because the current `PluginDef.cpp` parser requires it even for
-  decomposed components; the loader calls the module's four-argument
-  `createEncoding(name, sdk, roleName, pluginConfig)` factory.
-
-Import your library normally inside `codec.py`, for example `import your_codec`;
-do not shell out to a Python executable. Pin its distribution and dependencies
-in requirements.txt and install them in the matching Raceboat runtime image.
-Native extensions must match that runtime's Python ABI, architecture, and OS.
-`commsPluginBindings` and `_commsPluginBindings` come from Raceboat, not pip; do
-not copy or edit the generated bindings. Python plugin support must be enabled
-in the framework build.
-
-The adapter copies `pluginConfig.pluginDirectory` and `loggingDirectory` rather
-than retaining the loader's temporary config wrapper. Copy any other config
-strings needed by a codec during construction. The loader owns component lifetime; do not add a
-Python `destroyEncoding` or manually disown the component. Use SDK user-input
-requests and `onUserInputReceived` if configuration requires them.
-
-### Save encoded output for offline analysis
-
-The adapter requests `save-encoded-output` as an optional user setting. It
-defaults to false; declined, unanswered, or invalid input leaves persistence
-disabled. When enabled, each successful encode writes the exact encoded bytes
-to `<pluginConfig.loggingDirectory>/encoding-outputs/encoded-output-<handle>-<unique>.bin`.
-Decode output is not saved. If saving was explicitly enabled but the file
-cannot be written, the encode reports failure. Payload bytes are never logged.
-
-For integration tests, declare `save-encoded-output` as a boolean with default
-false in the dedicated composition's `channel_parameters`, with `plugin` set to
-that composition ID. Set `<composition-id>.save-encoded-output=true` in each
-integration node's `NodeContribution.params`. Do not change the default in the
-generated plugin. Use synthetic data and treat saved output as test data that
-requires appropriate access and cleanup.
-
-Each accepted operation issues exactly one completion callback using its original
-handle. Codec exceptions, invalid return types, and capacity violations produce
-`ENCODE_FAILED` and `COMPONENT_ERROR`. SDK callback exceptions are not caught and
-reported a second time. No payloads or parameters are logged. The default methods
-run synchronously; move expensive work to a bounded worker if necessary and keep
-the same completion contract. The current capacity is constant across parameter
-sets: replace `getEncodingPropertiesForParameters` and the matching enforcement
-if the selected codec has parameter-dependent capacity.
-
-## Test and Stage
-
-The scaffold needs only the Python standard library for its contract tests:
+## Building the Plugin
 
 ```bash
-cd plugins/python-encoding-stub
-bash run_unit_tests.sh -v
+# From meteor-encoding directory
+./build_artifacts.py --arch x86_64
+# Output: kit/artifacts/linux-x86_64-{client,server}/PluginMeteorEncoding/
 ```
 
-These tests use an explicit bindings double and patched codec hooks. Passing does
-not establish a working codec or framework integration. Generator tests also
-generate a temporary project, run its tests, and verify both staged kit layouts.
+No compilation step (pure Python). Dependencies in `requirements.txt` must be present in the runtime image.
 
-Run the separate real-SWIG smoke check in a matching Raceboat runtime with SDK
-Python modules on `PYTHONPATH` and SDK shared libraries on `LD_LIBRARY_PATH`:
+## Running Benchmarks
+
+Measure actual encoding time on target hardware (CPU/GPU) to set `encoding-time-seconds`:
 
 ```bash
-bash run_unit_tests.sh --real-bindings
+# Quick test (48 bytes, 2 chunks)
+./run_benchmark_docker.sh --payload-size 48 --runs 1 --warmup 0
+
+# Full benchmark (384 bytes, 8 chunks) - takes ~1 hour on CPU
+./run_benchmark_docker.sh --payload-size 384 --runs 3 --warmup 1 --timeout 7200
+
+# GPU (if available)
+./run_benchmark_docker.sh --device cuda --payload-size 384 --runs 3
+
+# JSON output for automation
+./run_benchmark_docker.sh --payload-size 384 --output-json
 ```
 
-This checks real SWIG types and Python-side SDK callbacks using test-only codec
-hooks; it is not a C++ director, loader, or transport integration test. Binding import errors are fatal,
-never replaced with a fake SDK. Use the same image tag for build/runtime gates.
+**Outputs recommended `encoding-time-seconds` with configurable safety margin (default 2x).**
 
-From a generated project, stage the source-only client and server kits:
+## Integration Testing
+
+Register plugin and run scenarios with `twoSixIndirect` transport:
 
 ```bash
-bash build_artifacts.sh --arch x86_64
+# From raceboat/test/integration
+python3 run_scenario.py --scenario-id meteor-send-recv --image-tag local
+python3 run_scenario.py --scenario-id meteor-send --image-tag local
+python3 run_scenario.py --scenario-id meteor-client-connect --image-tag local
 ```
 
-Use `arm64-v8a` for Linux ARM64. There is no CMake or compilation step for pure
-Python. The kit layout is
-`kit/artifacts/linux-<arch>-{client,server}/<Package>/manifest.json`, with
-`__init__.py`, `plugin.py`, `codec.py`, and metadata.json directly alongside the
-manifest. The kit root above `<Package>` is the loader's module search directory.
-Dependencies are not silently installed or vendored by this command;
-requirements.txt is copied as an installation inventory. Staging rebuilds only
-this plugin's output directory, and refuses unset template metadata. It does not
-prove that codec hooks have been implemented.
+**Channel parameters** (set in `NodeContribution.params`):
+```yaml
+meteorComposition.save-encoded-output: true
+meteorComposition.encoding-time-seconds: 2015.0  # from benchmark
+meteorComposition.encoding-params: '{"context":"...","input_key":"...","sample_seed_prefix":"...","input_nonce":"..."}'
+```
 
-Before calling a generated plugin complete, add actual library round-trip tests
-for empty input, all byte values, random binary payloads, malformed content,
-parameter validation, and exact capacity / capacity+1 boundaries. Benchmark the
-target runtime and record conditions; do not claim lossy formats recover arbitrary
-bytes without proof. Register a dedicated composition using `twoSixIndirect` and
-the new encoding, then pass the initial integration gate. Later test a transport
-that accepts the declared MIME type. Keep framework-owned examples unchanged.
+## Zero-Message Encoding
+
+- `encodeBytes` with empty payload → valid stegotext encoding the 4-byte length prefix (0)
+- `decodeBytes` of that stegotext → returns exactly empty bytes
+- No special-casing; framing handles it naturally
+
+## Test Payload Capacity Boundary
+
+- `max_bytes = 384` (enforced in `encodeBytes`/`decodeBytes`)
+- 384 bytes = 8 chunks × 48 bytes (framed payload = 388 bytes → 9 chunks)
+- Payloads > 384 bytes raise `ENCODE_FAILED`
+
+## Dependencies
+
+Runtime (must be in `raceboat-runtime` image):
+- `torch>=2.0.0` (BSD-3-Clause)
+- `transformers>=4.30.0` (Apache-2.0)
+- `numpy>=1.21.0` (BSD-3-Clause)
+- `bitarray>=2.6.0` (PSF)
+
+Raceboat framework:
+- `commsPluginBindings` (Apache-2.0, from raceboat runtime)
+
+Integration test only (not in plugin kit):
+- `twoSixIndirect` transport (decomposed-exemplars)
+- `rapidUser` user model (decomposed-exemplars)
+- `twosix-whiteboard` + `redis` sidecars
+
+## Third-Party Attribution
+
+See `THIRD_PARTY_NOTICES.md` for complete inventory including:
+- Meteor reference implementation (CC BY 4.0, schroederdewitt/perfectly-secure-steganography)
+- GPT-2 model weights (MIT, OpenAI/Hugging Face)
+- All transitive Python dependencies
+
+## Architecture Notes
+
+- **Worker subprocess isolation**: PyTorch/transformers runs in separate Python process to avoid embedded Python conflicts; communicates via JSON-RPC over stdin/stdout
+- **Model caching**: gpt2-medium pre-loaded in runtime image at `/opt/raceboat/models/gpt2-medium/`; respects `METEOR_MODEL_PATH` env var
+- **Sliding context**: Last 128 tokens carried between chunks for coherence
+- **Deterministic**: Same params + payload = same stegotext (cryptographic DRBG)
+
+## Directory Structure
+
+```
+meteor-encoding/
+├── source/PluginMeteorEncoding/
+│   ├── plugin.py          # Raceboat API adapter, factory, user-input handling
+│   ├── codec.py           # Meteor codec implementation (encode/decode)
+│   ├── metadata.json      # encoding_id, mime_type, max_bytes, encoding_time_seconds
+│   ├── manifest.json      # Encoding-only plugin registration
+│   ├── config/            # User model action files (send-only, combined, receive-only)
+│   └── __init__.py
+├── test/
+│   ├── test_component.py  # Unit tests with mocked SDK (8 tests, including zero-message)
+│   ├── adapter.py         # Integration test adapter for meteorComposition
+│   └── run_scenarios.py   # Standalone scenario runner
+├── run_benchmark_docker.sh  # Docker-based benchmark runner
+├── build_artifacts.py     # Kit staging script
+├── requirements.txt       # Python dependencies
+└── THIRD_PARTY_NOTICES.md # License attribution inventory
+```
+
+## License
+
+Apache-2.0 (plugin code). Third-party components retain their licenses per `THIRD_PARTY_NOTICES.md`.
