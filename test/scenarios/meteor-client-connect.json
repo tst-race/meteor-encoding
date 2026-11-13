@@ -1,0 +1,33 @@
+{
+  "id": "meteor-client-connect",
+  "mode": "client-connect",
+  "wait_time": 600,
+  "timeout": 1800,
+  "stub_timeout": 900,
+  "stub_connect_retries": 450,
+  "network": {
+    "name": "meteor-client-connect-network",
+    "subnet": "10.92.3.0/24"
+  },
+  "nodes": [
+    {
+      "role": "listener",
+      "id": "listener",
+      "ip": "10.92.3.3",
+      "slots": {
+        "channel": "meteorComposition"
+      }
+    },
+    {
+      "role": "connector",
+      "id": "dialer",
+      "ip": "10.92.3.2",
+      "slots": {
+        "channel": "meteorComposition"
+      }
+    }
+  ],
+  "linkDirectionOverrides": {
+    "meteorComposition": "LD_CREATOR_TO_LOADER"
+  }
+}

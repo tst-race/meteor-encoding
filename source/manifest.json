@@ -1,0 +1,39 @@
+{
+    "plugins": [
+        {
+            "file_path": "PluginMeteorEncoding",
+            "plugin_type": "comms",
+            "file_type": "python",
+            "node_type": "any",
+            "python_module": "PluginMeteorEncoding.plugin",
+            "python_class": "PluginMeteorEncoding",
+            "channels": [],
+            "transports": [],
+            "usermodels": [],
+            "encodings": ["meteor"]
+        }
+    ],
+    "channel_properties": {
+        "meteorComposition": {
+            "channelGid": "meteorComposition",
+            "connectionType": "CT_INDIRECT",
+            "linkDirection": "LD_BIDI",
+            "transmissionType": "TT_MULTICAST"
+        }
+    },
+    "channel_parameters": [
+        {
+            "key": "save-encoded-output",
+            "required": false,
+            "plugin": "meteorComposition"
+        }
+    ],
+    "compositions": [
+        {
+            "id": "meteorComposition",
+            "transport": "twoSixIndirect",
+            "usermodel": "rapidUser",
+            "encodings": ["meteor", "base64"]
+        }
+    ]
+}

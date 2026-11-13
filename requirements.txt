@@ -1,0 +1,6 @@
+# Meteor encoding component dependencies
+# commsPluginBindings is supplied by the matching Raceboat runtime, not PyPI.
+transformers>=4.30.0
+torch>=2.0.0
+numpy>=1.21.0
+bitarray>=2.6.0

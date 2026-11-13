@@ -1,0 +1,32 @@
+{
+  "wait_time": 90,
+  "timeout": 600,
+  "network": {
+    "name": "meteor-send-network",
+    "subnet": "10.92.1.0/24"
+  },
+  "nodes": [
+    {
+      "role": "listener",
+      "id": "listener",
+      "ip": "10.92.1.3",
+      "slots": {
+        "channel": "meteorComposition"
+      }
+    },
+    {
+      "role": "connector",
+      "id": "dialer",
+      "ip": "10.92.1.2",
+      "slots": {
+        "channel": "meteorComposition"
+      }
+    }
+  ],
+  "id": "meteor-send",
+  "mode": "send",
+  "send_message": "Hi",
+  "linkDirectionOverrides": {
+    "meteorComposition": "LD_CREATOR_TO_LOADER"
+  }
+}

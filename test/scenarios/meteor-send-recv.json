@@ -1,0 +1,33 @@
+{
+  "wait_time": 90,
+  "timeout": 600,
+  "network": {
+    "name": "meteor-send-recv-network",
+    "subnet": "10.92.2.0/24"
+  },
+  "nodes": [
+    {
+      "role": "listener",
+      "id": "listener",
+      "ip": "10.92.2.3",
+      "slots": {
+        "channel": "meteorComposition"
+      }
+    },
+    {
+      "role": "connector",
+      "id": "dialer",
+      "ip": "10.92.2.2",
+      "slots": {
+        "channel": "meteorComposition"
+      }
+    }
+  ],
+  "id": "meteor-send-recv",
+  "mode": "send-recv",
+  "send_message": "x",
+  "reply_message": "y",
+  "linkDirectionOverrides": {
+    "meteorComposition": "LD_CREATOR_TO_LOADER"
+  }
+}
